@@ -2,7 +2,7 @@
 #include "MCP9808.h"
 #include "config.h"
 #include "time.h"
-#include "RN2483.h"
+#include "RN2483-v2.h"
 #include "SmartHomeServerClient.h"
 #include "utils.h"
 
@@ -13,6 +13,17 @@ void blink(int times, int delayMS);
 void ledOff();
 void ledOn();
 char buf[100];
+void runMain();
+u_int8_t loraAddr = 0;
+
+enum MainState
+{
+  WAITING_LORA_READY,
+  SETUP_SENDT,
+  MAIN_LOOP
+};
+
+MainState mainState = WAITING_LORA_READY;
 
 void setup()
 {
@@ -31,37 +42,6 @@ void setup()
 
   Time.begin();
   FlashUtils.init();
-  Wire.begin(); // used by MCP9808 temp sensor
-
-  RN2483.setup();
-  // config radio:
-  RN2483.sendCommandRaw("mac pause", buf, sizeof(buf));
-  RN2483.sendCommandRaw("radio set pwr -3", buf, sizeof(buf));
-  RN2483.sendCommandRaw("radio set sf sf7", buf, sizeof(buf));
-
-  while (1)
-  {
-    Log.log("Sending setup request to server");
-    if (SmartHomeServerClient.ping())
-    {
-      InboundPacketHeader inboundPacketHeader = SmartHomeServerClient.receivePong();
-      if (!inboundPacketHeader.receiveError)
-      {
-
-        char buf[100];
-        snprintf(buf, 100, "Got time: %lu", inboundPacketHeader.timestamp);
-        Log.log(buf);
-
-        Time.setTime(inboundPacketHeader.timestamp);
-        break;
-      }
-    }
-    else
-    {
-      Log.log("Setup failed");
-      delay(LORA_RETRY_DELAY);
-    }
-  }
 
   Log.log("Setup done!");
   blink(4, 250);
@@ -70,72 +50,95 @@ void setup()
 void loop()
 {
 
-  uint8_t requestPayload[8];
-  InboundPacketHeader inboundPacketHeader = SmartHomeServerClient.receiveRequest(requestPayload, sizeof(requestPayload));
-  int requestType = inboundPacketHeader.type;
+  /*
+   *
+   * 1) Read HörmanE4-bridge status and notify server upon changes
+   * 2) Listen on wall-switch - use interrupt?
+   * 3) Listen on LoRa requests
+   *
+   */
 
-  if (requestType == 13)
+  RN2483V2.run();
+
+  switch (mainState)
   {
-    // turn on heater
-    Log.log("Turning heater on");
-    digitalWrite(HEATER_RELAY_PIN, HIGH);
-    SmartHomeServerClient.sendAck(15);
-    ledOn();
-    ledStatusOn = true;
-  }
-  else if (requestType == 14)
-  {
-    // trun off heater
-    Log.log("Turning heater off");
-    digitalWrite(HEATER_RELAY_PIN, LOW);
-    SmartHomeServerClient.sendAck(15);
-    ledOff();
-    ledStatusOn = false;
-  }
-  else if (requestType == 22)
-  {
-    blink(1, 250); // give server some time to switch to RX mode
-
-    bool shouldReadTemp = requestPayload[0] > 0;
-
-    // data request
-    TempReading tempReading;
-    tempReading.readError = 255;
-
-    if (shouldReadTemp)
+  case WAITING_LORA_READY:
+    if (RN2483V2.readyToTx())
     {
-      tempReading = MCP9808.readTemp();
+      uint8_t data[11 + 1 + 16];
+      DateTime time = Time.readTime();
+      data[0] = 1;                                 // to addr
+      data[1] = 0;                                 // from addr
+      data[2] = 0;                                 // setup request
+      writeUint32(time.secondsSince2000, data, 3); // 3-6
+      writeUint32(17, data, 7);                    // 7-10 - payloadsize
+      data[11] = FIRMWARE_VERSION;
+      writeSerial16Bytes(data, 12);
+
+      Log.log("Sending...");
+
+      uint8_t dataEncryped[sizeof(data) + CryptUtil.encryptionOverhead];
+      if (!CryptUtil.encrypt(
+              data,
+              sizeof(data),
+              dataEncryped,
+              sizeof(dataEncryped)))
+      {
+        mainState = MAIN_LOOP;
+      }
+      else
+      {
+        RN2483V2.scheduleTx(dataEncryped, sizeof(dataEncryped));
+        Log.log("Sendt");
+        mainState = SETUP_SENDT;
+      }
     }
+    break;
+  case SETUP_SENDT:
+    if (RN2483V2.currentState == LISTENING_WAITING_FOR_DATA_CONSUME)
+    {
 
-    Log.log("Sending data");
+      uint8_t receivePlainText[255];
+      bool decrypted = CryptUtil.decrypt(
+          RN2483V2.receivedData,
+          RN2483V2.receivedDataLength,
+          receivePlainText);
+      RN2483V2.dataConsumed();
 
-    SmartHomeServerClient.sendData(
-        tempReading.temperature,
-        digitalRead(HEATER_RELAY_PIN),
-        FIRMWARE_VERSION,
-        tempReading.readError);
+      if (!decrypted)
+      {
+        Log.log("decrypt failed");
+        mainState = MAIN_LOOP;
+        break;
+      }
 
-    // set mac pause to prevent it from timing out
-    RN2483.sendCommandRaw("mac pause", buf, sizeof(buf));
+      uint8_t to = receivePlainText[0];
+      uint8_t from = receivePlainText[1];
+      uint8_t type = receivePlainText[2];
+      unsigned long timestamp = toUInt(receivePlainText, 3);
+      unsigned long payloadLength = toUInt(receivePlainText, 7);
+
+      if (payloadLength == 17 && type == 1 && receivePlainText[11] == FIRMWARE_VERSION)
+      {
+        Log.log("PONG received - ok");
+        loraAddr = to;
+        mainState = MAIN_LOOP;
+      }
+      else
+      {
+        Log.log("Invaid PONG received");
+        mainState = WAITING_LORA_READY;
+      }
+    }
+    break;
+  default:
+    if (RN2483V2.currentState == LISTENING_WAITING_FOR_DATA_CONSUME)
+    {
+      Log.log("Marking as consumed");
+      RN2483V2.dataConsumed();
+    }
+    break;
   }
-  else if (requestType == 5)
-  {
-    FirmwareInfoResponse firmwareInfoResponse;
-    firmwareInfoResponse.receiveError = false;
-    firmwareInfoResponse.totalLength = toUInt(requestPayload, 0);
-    firmwareInfoResponse.crc32 = toUInt(requestPayload, 4);
-    Log.log("Upgrading firmware");
-    SmartHomeServerClient.upgradeFirmware(firmwareInfoResponse);
-  }
-  else
-  {
-    snprintf(buf, sizeof(buf), "Invalid request type: %d", requestType);
-    Log.log(buf);
-  }
-
-  // Unfortunately the clock of the Ateml SAMD21 drifts about 1 seconds per minute. Need to keep the
-  // time in sync for every message. Should have used an DS3231SN.
-  Time.setTime(inboundPacketHeader.timestamp);
 }
 
 void ledOn()
