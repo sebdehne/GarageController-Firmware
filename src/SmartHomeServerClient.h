@@ -1,10 +1,10 @@
 #ifndef _SMARTHOME_CLIENT_H
 #define _SMARTHOME_CLIENT_H
 
-#include "RN2483.h"
-#include "flash.h"
+#include "RN2483-v2.h"
+#include "logger.h"
 
-struct InboundPacketHeader
+struct SmartHomeServerMessageHeader
 {
     bool receiveError;
     uint8_t type;
@@ -14,43 +14,44 @@ struct InboundPacketHeader
     unsigned long payloadLength;
 };
 
-struct FirmwareInfoResponse
+enum SmartHomeServerClientState
 {
-    bool receiveError;
-    unsigned long totalLength;
-    unsigned long crc32;
+    WAITING_FOR_LORA_GETTING_READY,
+    WAITING_FOR_PONG,
+    LISTENING,
+    MESSAGE_RECEIVED,
+    RESPONSE_SCHEDULED,
 };
 
 class SmartHomeServerClientClass
 {
 private:
     uint8_t loraAddr = 0;
+    int headerSize = 11;
+    uint8_t receivedBuffer[255];
 
-    bool sendMessage(uint8_t type, unsigned char *payload, size_t payloadLength);
-    bool hasValidTimestamp(InboundPacketHeader inboundPacketHeader);
-    InboundPacketHeader receiveMessage(uint8_t *payloadBuffer, size_t payloadBufferLength, const unsigned long timeout);
+    unsigned long scheduledOutboundMessageWaittime = 0;
+    uint8_t scheduledOutboundMessagePayload[255];
+    size_t scheduledOutboundMessagePayloadLength = 0;
 
-    FirmwareInfoResponse getFirmwareInfo();
+    bool handleReceivedMessage();
+    bool hasValidTimestamp();
 
 public:
     SmartHomeServerClientClass();
 
-    int headerSize = 11;
+    // internal status
+    SmartHomeServerClientState currentState = WAITING_FOR_LORA_GETTING_READY;
+    unsigned long currentStateChangedAt = millis();
 
-    bool ping();
-    InboundPacketHeader receivePong();
-    void setLoraAddr(uint8_t addr);
+    // RX
+    SmartHomeServerMessageHeader receivedMessage;
+    uint8_t receivedPayload[100];
+    bool scheduleSendMessage(unsigned long waitBeforeSending, uint8_t type, unsigned char *payload, size_t payloadLength);
+    void messageIgnored();
 
-    bool sendAck(uint8_t type);
-
-    bool sendData(
-        int temp,
-        bool heaterOn,
-        uint8_t firmwareVersion,
-        uint8_t temperatureError);
-
-    InboundPacketHeader receiveRequest(uint8_t *payloadBuffer, size_t payloadBufferLength);
-    void upgradeFirmware(FirmwareInfoResponse firmwareInfoResponse);
+    // do work if possible - non-blocking functions - should be called in a loop to make progress
+    void run();
 };
 
 extern SmartHomeServerClientClass SmartHomeServerClient;

@@ -1,29 +1,25 @@
 #include <Arduino.h>
-#include "MCP9808.h"
 #include "config.h"
 #include "time.h"
 #include "RN2483-v2.h"
 #include "SmartHomeServerClient.h"
 #include "utils.h"
+#include "dac_dfr0971.h"
 
-#define HEATER_RELAY_PIN 4
+unsigned long lastChangeWallSwitch = 5000;
+int wallSwitchStatus = HIGH;      // not pressed
+int ceilingLightningStatus = LOW; // off
+bool handleCeilingLightning();
+uint16_t dac_channel_0_millivoltage = 0;
+uint16_t dac_channel_1_millivoltage = 0;
 
-bool ledStatusOn = false;
-void blink(int times, int delayMS);
-void ledOff();
-void ledOn();
-char buf[100];
-void runMain();
-u_int8_t loraAddr = 0;
+bool ceilingLightNotifyAwaitingAck = 0;
+unsigned long ceilingLightNotifyAwaitingAckSince = 0;
 
-enum MainState
-{
-  WAITING_LORA_READY,
-  SETUP_SENDT,
-  MAIN_LOOP
-};
+#define PIN_WALL_SWITCH_PIN 15
+#define PIN_CEILING_LIGHTNING_RELAY 4
 
-MainState mainState = WAITING_LORA_READY;
+#define LORA_RESPONSE_DELAY 0
 
 void setup()
 {
@@ -38,136 +34,148 @@ void setup()
 #endif
 
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(HEATER_RELAY_PIN, OUTPUT);
+  pinMode(PIN_WALL_SWITCH_PIN, INPUT_PULLUP);   // wall impulse switch (pulled down when closed)
+  pinMode(PIN_CEILING_LIGHTNING_RELAY, OUTPUT); // relay
 
   Time.begin();
-  FlashUtils.init();
-
   Log.log("Setup done!");
-  blink(4, 250);
 }
 
 void loop()
 {
-
   /*
+   * All code is non-blocking and the main loop
+   * calls all the components to make overall progress.
    *
-   * 1) Read HörmanE4-bridge status and notify server upon changes
-   * 2) Listen on wall-switch - use interrupt?
-   * 3) Listen on LoRa requests
-   *
+   * This is how concurrency on a single core is done :)
    */
 
-  RN2483V2.run();
+  SmartHomeServerClient.run();
 
-  switch (mainState)
+  // retry NOTIFY if needed...
+  if (handleCeilingLightning() || (ceilingLightNotifyAwaitingAck && millis() - ceilingLightNotifyAwaitingAckSince > 2000))
   {
-  case WAITING_LORA_READY:
-    if (RN2483V2.readyToTx())
-    {
-      uint8_t data[11 + 1 + 16];
-      DateTime time = Time.readTime();
-      data[0] = 1;                                 // to addr
-      data[1] = 0;                                 // from addr
-      data[2] = 0;                                 // setup request
-      writeUint32(time.secondsSince2000, data, 3); // 3-6
-      writeUint32(17, data, 7);                    // 7-10 - payloadsize
-      data[11] = FIRMWARE_VERSION;
-      writeSerial16Bytes(data, 12);
-
-      Log.log("Sending...");
-
-      uint8_t dataEncryped[sizeof(data) + CryptUtil.encryptionOverhead];
-      if (!CryptUtil.encrypt(
-              data,
-              sizeof(data),
-              dataEncryped,
-              sizeof(dataEncryped)))
-      {
-        mainState = MAIN_LOOP;
-      }
-      else
-      {
-        RN2483V2.scheduleTx(dataEncryped, sizeof(dataEncryped));
-        Log.log("Sendt");
-        mainState = SETUP_SENDT;
-      }
-    }
-    break;
-  case SETUP_SENDT:
-    if (RN2483V2.currentState == LISTENING_WAITING_FOR_DATA_CONSUME)
-    {
-
-      uint8_t receivePlainText[255];
-      bool decrypted = CryptUtil.decrypt(
-          RN2483V2.receivedData,
-          RN2483V2.receivedDataLength,
-          receivePlainText);
-      RN2483V2.dataConsumed();
-
-      if (!decrypted)
-      {
-        Log.log("decrypt failed");
-        mainState = MAIN_LOOP;
-        break;
-      }
-
-      uint8_t to = receivePlainText[0];
-      uint8_t from = receivePlainText[1];
-      uint8_t type = receivePlainText[2];
-      unsigned long timestamp = toUInt(receivePlainText, 3);
-      unsigned long payloadLength = toUInt(receivePlainText, 7);
-
-      if (payloadLength == 17 && type == 1 && receivePlainText[11] == FIRMWARE_VERSION)
-      {
-        Log.log("PONG received - ok");
-        loraAddr = to;
-        mainState = MAIN_LOOP;
-      }
-      else
-      {
-        Log.log("Invaid PONG received");
-        mainState = WAITING_LORA_READY;
-      }
-    }
-    break;
-  default:
-    if (RN2483V2.currentState == LISTENING_WAITING_FOR_DATA_CONSUME)
-    {
-      Log.log("Marking as consumed");
-      RN2483V2.dataConsumed();
-    }
-    break;
+    // craft GARAGE_LIGHT_NOTIFY_CEILING_LIGHT - 28
+    uint8_t responsePayload[1];
+    responsePayload[0] = ceilingLightningStatus;
+    SmartHomeServerClient.scheduleSendMessage(0, 28, responsePayload, sizeof(responsePayload));
+    ceilingLightNotifyAwaitingAck = true;
+    ceilingLightNotifyAwaitingAckSince = millis();
+    Log.log("GARAGE_LIGHT_NOTIFY_CEILING_LIGHT scheduled");
   }
-}
 
-void ledOn()
-{
-  digitalWrite(LED_BUILTIN, HIGH);
-}
-
-void ledOff()
-{
-  digitalWrite(LED_BUILTIN, LOW);
-}
-
-void blink(int times, int delayMS)
-{
-  while (times-- > 0)
+  if (SmartHomeServerClient.currentState == MESSAGE_RECEIVED)
   {
-    if (ledStatusOn)
+    // handle incoming message
+
+    // GARAGE_LIGHT_ACK - 30
+    if (SmartHomeServerClient.receivedMessage.payloadLength == 0 && SmartHomeServerClient.receivedMessage.type == 30)
     {
-      ledOff();
-      delay(delayMS);
-      ledOn();
-      delay(delayMS);
+      ceilingLightNotifyAwaitingAck = false;
+      Log.log("Received: ACK for GARAGE_LIGHT_NOTIFY_CEILING_LIGHT");
     }
+
+    // GARAGE_LIGHT_GET_STATUS - 23
+    else if (SmartHomeServerClient.receivedMessage.payloadLength == 0 && SmartHomeServerClient.receivedMessage.type == 23)
+    {
+      Log.log("Received: GARAGE_LIGHT_GET_STATUS");
+      // craft status response
+      uint8_t responsePayload[5];
+      writeUint16(dac_channel_0_millivoltage, responsePayload, 0);
+      writeUint16(dac_channel_1_millivoltage, responsePayload, 2);
+      responsePayload[4] = ceilingLightningStatus;
+
+      // GARAGE_LIGHT_STATUS_RESPONSE - 24
+      SmartHomeServerClient.scheduleSendMessage(LORA_RESPONSE_DELAY, 24, responsePayload, sizeof(responsePayload));
+      Log.log("Response scheduled");
+    }
+
+    // GARAGE_LIGHT_SWITCH_CEILING_LIGHT_ON - 25
+    else if (SmartHomeServerClient.receivedMessage.payloadLength == 0 && SmartHomeServerClient.receivedMessage.type == 25)
+    {
+      Log.log("Received: GARAGE_LIGHT_SWITCH_CEILING_LIGHT_ON");
+      ceilingLightningStatus = HIGH;
+
+      // send GARAGE_LIGHT_ACK
+      uint8_t responsePayload[0];
+      SmartHomeServerClient.scheduleSendMessage(LORA_RESPONSE_DELAY, 29, responsePayload, sizeof(responsePayload));
+    }
+    // GARAGE_LIGHT_SWITCH_CEILING_LIGHT_OFF - 26
+    else if (SmartHomeServerClient.receivedMessage.payloadLength == 0 && SmartHomeServerClient.receivedMessage.type == 26)
+    {
+      Log.log("Received: GARAGE_LIGHT_SWITCH_CEILING_LIGHT_OFF");
+      ceilingLightningStatus = LOW;
+
+      // send GARAGE_LIGHT_ACK
+      uint8_t responsePayload[0];
+      SmartHomeServerClient.scheduleSendMessage(LORA_RESPONSE_DELAY, 29, responsePayload, sizeof(responsePayload));
+    }
+    // GARAGE_LIGHT_SET_DAC - 27
+    else if (SmartHomeServerClient.receivedMessage.payloadLength == 4 && SmartHomeServerClient.receivedMessage.type == 27)
+    {
+      Log.log("Received: GARAGE_LIGHT_SET_DAC");
+      uint16_t dac0MilliVolts = toUint16_t(SmartHomeServerClient.receivedPayload, 0);
+      uint16_t dac1MilliVolts = toUint16_t(SmartHomeServerClient.receivedPayload, 2);
+
+      char buf[200];
+
+      if (dac0MilliVolts != dac_channel_0_millivoltage)
+      {
+        dac_channel_0_millivoltage = dac0MilliVolts;
+        DacDfr0971.setDacMillivoltage(dac_channel_0_millivoltage, 0);
+        snprintf(buf, sizeof(buf), "Dac.ch0 updated: %u", dac_channel_0_millivoltage);
+        Log.log(buf);
+        delay(200);
+      }
+      if (dac1MilliVolts != dac_channel_1_millivoltage)
+      {
+        dac_channel_1_millivoltage = dac1MilliVolts;
+        DacDfr0971.setDacMillivoltage(dac_channel_1_millivoltage, 1);
+        snprintf(buf, sizeof(buf), "Dac.ch1 updated: %u", dac_channel_1_millivoltage);
+        Log.log(buf);
+      }
+
+      // send GARAGE_LIGHT_ACK
+      uint8_t responsePayload[0];
+      SmartHomeServerClient.scheduleSendMessage(LORA_RESPONSE_DELAY, 29, responsePayload, sizeof(responsePayload));
+    }
+
     else
     {
-      ledOn();
-      delay(delayMS);
-      ledOff();
-      delay(delayMS);
+      Log.log("Invalig message received");
+      SmartHomeServerClient.messageIgnored();
     }
   }
+
+  
+}
+
+bool handleCeilingLightning()
+{
+  bool result = false; // true if light status has changed
+
+  unsigned long elapsed = millis() - lastChangeWallSwitch;
+  if (elapsed < 1000)
+    return result;
+
+  int wall = digitalRead(PIN_WALL_SWITCH_PIN);
+  // LOW means button pressed
+
+  if (wall == LOW && wallSwitchStatus == HIGH)
+  {
+    // button changed to pressed
+    ceilingLightningStatus = !ceilingLightningStatus;
+    result = true;
+  }
+  else if (wall == HIGH && wallSwitchStatus == LOW)
+  {
+    // button released
+    lastChangeWallSwitch = millis();
+  }
+  wallSwitchStatus = wall;
+
+  digitalWrite(PIN_CEILING_LIGHTNING_RELAY, ceilingLightningStatus);
+  digitalWrite(LED_BUILTIN, ceilingLightningStatus);
+
+  return result;
 }

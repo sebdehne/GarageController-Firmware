@@ -55,14 +55,14 @@ public:
     // tx handling
     bool readyToTx();
     TxStatus lastTxStatus = SUCCESS;
-    void scheduleTx(uint8_t *plainText, size_t plainTextLen);
+    void scheduleTx(uint8_t *data, size_t dataLen);
 
     // rx handling
     uint8_t receivedData[255]; // maxDataSize
     size_t receivedDataLength = 0;
     void dataConsumed();
 
-    // do work if possible
+    // do work if possible - non-blocking functions - should be called in a loop to make progress
     void run();
 };
 

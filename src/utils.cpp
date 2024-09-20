@@ -23,6 +23,11 @@ void writeCharArray(char src[], int srcLength, unsigned char dst[], int dstOffse
     }
 }
 
+void writeUint16(uint16_t src, unsigned char dst[], int dstOffset)
+{
+    dst[dstOffset + 0] = (src >> 8) & 0xFF;
+    dst[dstOffset + 1] = src & 0xFF;
+}
 void writeUint32(unsigned int src, unsigned char dst[], int dstOffset)
 {
     dst[dstOffset + 0] = (src >> 24) & 0xFF;
@@ -72,6 +77,15 @@ int toInt(unsigned char src[], int srcOffset)
     result = result + src[srcOffset + 2];
     result <<= 8;
     result = result + src[srcOffset + 3];
+    return result;
+}
+
+uint16_t toUint16_t(unsigned char src[], int srcOffset)
+{
+    uint16_t result = 0;
+    result = result + src[srcOffset + 0];
+    result <<= 8;
+    result = result + src[srcOffset + 1];
     return result;
 }
 

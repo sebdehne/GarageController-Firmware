@@ -2,343 +2,209 @@
 #include "logger.h"
 #include "utils.h"
 #include "time.h"
+#include "RN2483-v2.h"
 
 SmartHomeServerClientClass::SmartHomeServerClientClass() {}
 
-void SmartHomeServerClientClass::setLoraAddr(uint8_t addr)
+void SmartHomeServerClientClass::messageIgnored()
 {
-    loraAddr = addr;
-}
-
-bool SmartHomeServerClientClass::ping()
-{
-
-    uint8_t ping_data[1 + 16];
-    ping_data[0] = FIRMWARE_VERSION;
-    writeSerial16Bytes(ping_data, 1);
-
-    return sendMessage(0, ping_data, sizeof(ping_data));
-}
-
-InboundPacketHeader SmartHomeServerClientClass::receivePong()
-{
-    uint8_t ping_data[1 + 16];
-    InboundPacketHeader inboundPacketHeader = receiveMessage(
-        ping_data,
-        sizeof(ping_data),
-        2000);
-    if (inboundPacketHeader.receiveError)
+    if (currentState == MESSAGE_RECEIVED)
     {
-        return inboundPacketHeader;
+        currentState = LISTENING;
+        currentStateChangedAt = millis();
     }
-
-    if (inboundPacketHeader.type == 1 && inboundPacketHeader.from == 1 && ping_data[0] == FIRMWARE_VERSION)
-    {
-        Log.log("Pong response valid!!!!!!!!!!!!!");
-        loraAddr = inboundPacketHeader.to;
-    }
-    else
-    {
-        inboundPacketHeader.receiveError = true;
-        Log.log("Pong response invalid");
-    }
-    return inboundPacketHeader;
 }
-
-bool SmartHomeServerClientClass::sendAck(uint8_t type)
-{
-    uint8_t payload[0];
-    return sendMessage(type, payload, sizeof(payload));
-}
-
-bool SmartHomeServerClientClass::sendData(
-    int temp,
-    bool heaterOn,
-    uint8_t firmwareVersion,
-    uint8_t temperatureError)
-{
-    uint8_t payload[4 + 4 + 2];
-    writeInt32(temp, payload, 0);
-    payload[4] = 0;
-    payload[5] = 0;
-    payload[6] = 0;
-    payload[7] = heaterOn;
-    payload[8] = firmwareVersion;
-    payload[9] = temperatureError;
-
-    return sendMessage(20, payload, sizeof(payload));
-}
-
-InboundPacketHeader SmartHomeServerClientClass::receiveRequest(
-    uint8_t *payloadBuffer,
-    size_t payloadBufferLength)
-{
-
-    InboundPacketHeader inboundPacketHeader = receiveMessage(payloadBuffer, payloadBufferLength, 60000);
-    if (!inboundPacketHeader.receiveError)
-    {
-        if (!hasValidTimestamp(inboundPacketHeader))
-        {
-            Log.log("Invalid timestamp in response");
-            inboundPacketHeader.receiveError = true;
-        }
-    }
-
-    return inboundPacketHeader;
-}
-
-InboundPacketHeader SmartHomeServerClientClass::receiveMessage(
-    uint8_t *payloadBuffer,
-    size_t payloadBufferLength,
-    const unsigned long timeout)
-{
-    const unsigned long startTime = millis();
-
-    InboundPacketHeader inboundPacketHeader;
-    inboundPacketHeader.receiveError = true;
-
-    uint8_t receiveBuffer[RN2483.maxDataSize];
-
-    while (millis() - startTime < timeout)
-    {
-
-        int bytesReceived = RN2483.receiveData(
-            receiveBuffer,
-            sizeof(receiveBuffer),
-            timeout - (millis() - startTime));
-
-        if (bytesReceived < headerSize)
-        {
-            Log.log("Ignoring too few bytes (or none)");
-            continue;
-        }
-        if (loraAddr != 0 && receiveBuffer[0] != loraAddr)
-        {
-            Log.log("Ignoring message not for me");
-            continue;
-        }
-        inboundPacketHeader.type = receiveBuffer[2];
-        inboundPacketHeader.to = receiveBuffer[0];
-        inboundPacketHeader.from = receiveBuffer[1];
-        inboundPacketHeader.timestamp = toUInt(receiveBuffer, 3);
-        inboundPacketHeader.payloadLength = toUInt(receiveBuffer, 7);
-        if (inboundPacketHeader.payloadLength > payloadBufferLength)
-        {
-            Log.log("payloadBufferLength too small");
-            return inboundPacketHeader;
-        }
-
-        for (unsigned int i = 0; i < inboundPacketHeader.payloadLength; i++)
-        {
-            (*(payloadBuffer++)) = receiveBuffer[headerSize + i];
-        }
-        inboundPacketHeader.receiveError = false;
-        return inboundPacketHeader;
-    }
-
-    Log.log("receiveMessage() - timeout");
-    return inboundPacketHeader;
-}
-
-bool SmartHomeServerClientClass::hasValidTimestamp(InboundPacketHeader inboundPacketHeader)
+bool SmartHomeServerClientClass::hasValidTimestamp()
 {
     DateTime dateTime = Time.readTime();
 
-    long delta = dateTime.secondsSince2000 - inboundPacketHeader.timestamp;
+    long delta = dateTime.secondsSince2000 - receivedMessage.timestamp;
 
     if (delta < 30 && delta > -30)
     {
         return true;
     }
     Serial.println(dateTime.secondsSince2000);
-    Serial.println(inboundPacketHeader.timestamp);
+    Serial.println(receivedMessage.timestamp);
     return false;
 }
-
-bool SmartHomeServerClientClass::sendMessage(uint8_t type, unsigned char *payload, size_t payloadLength)
+bool SmartHomeServerClientClass::handleReceivedMessage()
 {
-    uint8_t data[255];
-    if (payloadLength + headerSize > RN2483.maxDataSize)
+    receivedMessage.receiveError = true;
+    bool decrypted = CryptUtil.decrypt(
+        RN2483V2.receivedData,
+        RN2483V2.receivedDataLength,
+        receivedBuffer);
+    RN2483V2.dataConsumed();
+
+    if (!decrypted)
+    {
+        Log.log("decrypt failed");
+        return false;
+    }
+
+    receivedMessage.to = receivedBuffer[0];
+    receivedMessage.from = receivedBuffer[1];
+    receivedMessage.type = receivedBuffer[2];
+    receivedMessage.timestamp = toUInt(receivedBuffer, 3);
+    receivedMessage.payloadLength = toUInt(receivedBuffer, 7);
+    receivedMessage.receiveError = false;
+    for (int i = 0; i < receivedMessage.payloadLength; i++)
+    {
+        receivedPayload[i] = receivedBuffer[headerSize + i];
+    }
+    return true;
+}
+
+bool SmartHomeServerClientClass::scheduleSendMessage(unsigned long waitBeforeSending, uint8_t type, unsigned char *payload, size_t payloadLength)
+{
+    if (payloadLength + headerSize + CryptUtil.encryptionOverhead > sizeof(scheduledOutboundMessagePayload))
     {
         Log.log("Payload too large");
         return false;
     }
+
     DateTime time = Time.readTime();
 
-    data[0] = 1;        // to addr
-    data[1] = loraAddr; // from addr
-    data[2] = type;
-    writeUint32(time.secondsSince2000, data, 3);
-    writeUint32(payloadLength, data, 7);
-    for (unsigned int i = 0; i < payloadLength; i++)
+    uint8_t data[payloadLength + headerSize];
+    uint8_t i = 0;
+    data[i++] = 1;        // to
+    data[i++] = loraAddr; // from
+    data[i++] = type;
+    writeUint32(time.secondsSince2000, data, i++); // 3-6
+    i = i + 3;
+    writeUint32(payloadLength, data, i++); // 7-10 - payloadsize
+    i = i + 3;
+
+    for (int pi = 0; pi < payloadLength; pi++)
     {
-        data[i + headerSize] = payload[i];
+        data[i + pi] = payload[pi];
     }
 
-    return RN2483.transmitData(data, payloadLength + headerSize);
-}
-
-void SmartHomeServerClientClass::upgradeFirmware(FirmwareInfoResponse firmwareInfoResponse)
-{
-    char logBuf[1024];
-    Log.log("Start firmware upgrade");
-
-    delay(500);                                                                                      // going too fast after firmwareInfoResponse doesn't work
-    const uint8_t maxFirmwareBytesPerResponse = 255 - headerSize - CryptUtil.encryptionOverhead - 1; //  215
-    const int packetsPerAck = 5;
-    const unsigned long receiveBytesWithoutAck = maxFirmwareBytesPerResponse * packetsPerAck;
-    unsigned long bytesWrittenToFlash = 0;
-    uint8_t receiveBuffer[maxFirmwareBytesPerResponse + 1];
-    unsigned long awaitingIncomingBytes = 0;
-    int sequentNumber = 0;
-    int retryAttempts = LORA_RETRY_FIRMWARE_COUNT;
-    bool failed = false;
-    while (true)
+    if (!CryptUtil.encrypt(
+            data,
+            headerSize + payloadLength,
+            scheduledOutboundMessagePayload,
+            sizeof(scheduledOutboundMessagePayload)))
     {
-        if (failed)
-        {
-            failed = false;
-            delay(LORA_RETRY_DELAY);
-            retryAttempts--;
-            awaitingIncomingBytes = 0;
-        }
-
-        if (retryAttempts < 0)
-        {
-            Log.log("Failed. Ran out of retries");
-            return;
-        }
-
-        if (awaitingIncomingBytes == 0)
-        {
-            if ((firmwareInfoResponse.totalLength - bytesWrittenToFlash) > receiveBytesWithoutAck)
-            {
-                awaitingIncomingBytes = receiveBytesWithoutAck;
-            }
-            else
-            {
-                awaitingIncomingBytes = firmwareInfoResponse.totalLength - bytesWrittenToFlash;
-            }
-
-            uint8_t firmwareDataPayload[9];
-            writeUint32(bytesWrittenToFlash, firmwareDataPayload, 0);
-            writeUint32(awaitingIncomingBytes, firmwareDataPayload, 4);
-            firmwareDataPayload[8] = maxFirmwareBytesPerResponse;
-            if (!sendMessage(6, firmwareDataPayload, sizeof(firmwareDataPayload)))
-            {
-                Log.log("Failed. Could not send firmwareDataRequest");
-                failed = true;
-                continue;
-            }
-            sequentNumber = 0;
-        }
-
-        InboundPacketHeader inboundPacketHeader = receiveMessage(
-            receiveBuffer,
-            sizeof(receiveBuffer),
-            2000);
-
-        if (inboundPacketHeader.receiveError)
-        {
-            Log.log("receiveError");
-            failed = true;
-            continue;
-        }
-        if (!hasValidTimestamp(inboundPacketHeader))
-        {
-            Log.log("Invalid timestamp in response");
-            failed = true;
-            continue;
-        }
-        if (inboundPacketHeader.type != 7)
-        {
-            Log.log("Invalid response type");
-            failed = true;
-            continue;
-        }
-        if (receiveBuffer[0] != sequentNumber)
-        {
-            // out of sync, abort
-            Log.log("Out of sync");
-            failed = true;
-            continue;
-        }
-
-        if (bytesWrittenToFlash == 0)
-        {
-            FlashUtils.prepareWritingFirmware();
-        }
-
-        // ok all good, accept the bytes
-        unsigned long firmwareBytesReceived = inboundPacketHeader.payloadLength - 1;
-        snprintf(logBuf, sizeof(logBuf), "OK (%i) accepted %lu bytes", sequentNumber, firmwareBytesReceived);
-        Log.log(logBuf);
-        for (unsigned long j = 0; j < firmwareBytesReceived; j++)
-        {
-            FlashUtils.write(receiveBuffer[j + 1]);
-            bytesWrittenToFlash++;
-            awaitingIncomingBytes--;
-        }
-        sequentNumber++;
-        retryAttempts = LORA_RETRY_FIRMWARE_COUNT;
-
-        if (bytesWrittenToFlash == firmwareInfoResponse.totalLength)
-        {
-            FlashUtils.finishWriting();
-            break;
-        }
+        Log.log("Encryption failed");
+        return false;
     }
 
-    unsigned long calculatedCrc32 = FlashUtils.applyFirmwareAndReset(firmwareInfoResponse.totalLength, firmwareInfoResponse.crc32);
-    snprintf(
-        logBuf,
-        sizeof(logBuf),
-        "CRC32-error: firmwareSize=%lu receivedCRC32=%lu firmwareChecksum=%lu",
-        firmwareInfoResponse.totalLength,
-        firmwareInfoResponse.crc32,
-        calculatedCrc32);
-    Log.log(logBuf);
+    scheduledOutboundMessagePayloadLength = headerSize + payloadLength + CryptUtil.encryptionOverhead;
+    scheduledOutboundMessageWaittime = waitBeforeSending;
+
+    currentState = RESPONSE_SCHEDULED;
+    currentStateChangedAt = millis();
+
+    Log.log("SmartHomeServerClientClass.messageConsumedScheduleResponse() - Message scheudled");
+    return true;
 }
 
-FirmwareInfoResponse SmartHomeServerClientClass::getFirmwareInfo()
+void SmartHomeServerClientClass::run()
 {
-    FirmwareInfoResponse firmwareInfoResponse;
-    firmwareInfoResponse.receiveError = true;
+    RN2483V2.run();
 
-    for (int i = 0; i < LORA_RETRY_FIRMWARE_COUNT; i++)
+    switch (currentState)
     {
-        uint8_t payload[0];
-        if (sendMessage(4, payload, 0))
+    case WAITING_FOR_LORA_GETTING_READY:
+        if (RN2483V2.readyToTx())
         {
-            uint8_t firmwareInfoData[8];
-            InboundPacketHeader inboundPacketHeader = receiveMessage(
-                firmwareInfoData,
-                sizeof(firmwareInfoData),
-                2000);
-            if (!inboundPacketHeader.receiveError)
+            uint8_t data[headerSize + 1 + 16];
+            DateTime time = Time.readTime();
+            data[0] = 1;                                 // to addr
+            data[1] = 0;                                 // from addr
+            data[2] = 0;                                 // setup request
+            writeUint32(time.secondsSince2000, data, 3); // 3-6
+            writeUint32(17, data, 7);                    // 7-10 - payloadsize
+            data[11] = FIRMWARE_VERSION;
+            writeSerial16Bytes(data, 12);
+
+            uint8_t dataEncryped[sizeof(data) + CryptUtil.encryptionOverhead];
+            if (!CryptUtil.encrypt(
+                    data,
+                    sizeof(data),
+                    dataEncryped,
+                    sizeof(dataEncryped)))
             {
-                if (!hasValidTimestamp(inboundPacketHeader))
+                return;
+            }
+            RN2483V2.scheduleTx(dataEncryped, sizeof(dataEncryped));
+            Log.log("Sendt PING/Setup");
+            currentState = WAITING_FOR_PONG;
+            currentStateChangedAt = millis();
+        }
+        break;
+
+    case WAITING_FOR_PONG:
+        if (millis() - currentStateChangedAt > 5000)
+        {
+            Log.log("PING retry");
+            currentState = WAITING_FOR_LORA_GETTING_READY;
+            currentStateChangedAt = millis();
+        }
+        else if (RN2483V2.currentState == LISTENING_WAITING_FOR_DATA_CONSUME)
+        {
+            if (handleReceivedMessage())
+            {
+                if (receivedMessage.from == 1 && receivedMessage.payloadLength == 17 && receivedBuffer[headerSize + 0] == FIRMWARE_VERSION)
                 {
-                    Log.log("Invalid timestamp");
-                }
-                else if (inboundPacketHeader.type != 5)
-                {
-                    Log.log("Invalid response type");
+                    loraAddr = receivedMessage.to;
+                    Log.log("Received PONG");
+                    Time.setTime(receivedMessage.timestamp);
+                    currentState = LISTENING;
+                    currentStateChangedAt = millis();
                 }
                 else
                 {
-                    firmwareInfoResponse.receiveError = false;
-                    firmwareInfoResponse.totalLength = toUInt(firmwareInfoData, 0);
-                    firmwareInfoResponse.crc32 = toUInt(firmwareInfoData, 4);
-                    return firmwareInfoResponse;
+                    char buf[350];
+                    snprintf(buf, 350, "Invalid message received, from: %u payloadLength: %u", receivedMessage.from, receivedMessage.payloadLength);
+                    Log.log(buf);
                 }
             }
         }
+        break;
 
-        Log.log("Retry getFirmwareInfo()");
-        delay(LORA_RETRY_DELAY);
+    case LISTENING:
+        if (RN2483V2.currentState == LISTENING_WAITING_FOR_DATA_CONSUME)
+        {
+            if (handleReceivedMessage())
+            {
+                if (receivedMessage.to != loraAddr)
+                {
+                    Log.log("Msg not for me");
+                }
+                else if (!hasValidTimestamp())
+                {
+                    Log.log("Invalid timestamp");
+                }
+                else
+                {
+                    // local clock is drifting too much - need to update each time
+                    Time.setTime(receivedMessage.timestamp);
+                    currentState = MESSAGE_RECEIVED;
+                    currentStateChangedAt = millis();
+                }
+            }
+        }
+        break;
+    case MESSAGE_RECEIVED:
+        break;
+    case RESPONSE_SCHEDULED:
+        if (millis() - currentStateChangedAt >= scheduledOutboundMessageWaittime)
+        {
+            RN2483V2.scheduleTx(scheduledOutboundMessagePayload, scheduledOutboundMessagePayloadLength);
+            Log.log("Message delivered to RN2483V2");
+            currentState = LISTENING;
+            currentStateChangedAt = millis();
+        } else {
+            Log.log("Wait time not passed yet");
+        }
+        break;
+
+    default:
+        break;
     }
-    return firmwareInfoResponse;
 }
 
 SmartHomeServerClientClass SmartHomeServerClient;
