@@ -19,8 +19,7 @@ enum SmartHomeServerClientState
     WAITING_FOR_LORA_GETTING_READY,
     WAITING_FOR_PONG,
     LISTENING,
-    MESSAGE_RECEIVED,
-    RESPONSE_SCHEDULED,
+    MESSAGE_RECEIVED
 };
 
 class SmartHomeServerClientClass
@@ -29,10 +28,6 @@ private:
     uint8_t loraAddr = 0;
     int headerSize = 11;
     uint8_t receivedBuffer[255];
-
-    unsigned long scheduledOutboundMessageWaittime = 0;
-    uint8_t scheduledOutboundMessagePayload[255];
-    size_t scheduledOutboundMessagePayloadLength = 0;
 
     bool handleReceivedMessage();
     bool hasValidTimestamp();
@@ -47,8 +42,8 @@ public:
     // RX
     SmartHomeServerMessageHeader receivedMessage;
     uint8_t receivedPayload[100];
-    bool scheduleSendMessage(unsigned long waitBeforeSending, uint8_t type, unsigned char *payload, size_t payloadLength);
-    void messageIgnored();
+    bool sendMessage(uint8_t type, unsigned char *payload, size_t payloadLength);
+    void messageConsumed();
 
     // do work if possible - non-blocking functions - should be called in a loop to make progress
     void run();

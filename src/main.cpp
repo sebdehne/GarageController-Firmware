@@ -4,7 +4,7 @@
 #include "RN2483-v2.h"
 #include "SmartHomeServerClient.h"
 #include "utils.h"
-#include "dac_dfr0971.h"
+#include "ledstripe.h"
 
 unsigned long lastChangeWallSwitch = 5000;
 int wallSwitchStatus = HIGH;      // not pressed
@@ -18,8 +18,6 @@ unsigned long ceilingLightNotifyAwaitingAckSince = 0;
 
 #define PIN_WALL_SWITCH_PIN 15
 #define PIN_CEILING_LIGHTNING_RELAY 4
-
-#define LORA_RESPONSE_DELAY 0
 
 void setup()
 {
@@ -51,6 +49,11 @@ void loop()
    */
 
   SmartHomeServerClient.run();
+  LedStripe.run();
+  if (Log.debug_condition_1 && Log.debug_condition_2)
+  {
+    Log.log("main::loop() - LedStripe.run() done");
+  }
 
   // retry NOTIFY if needed...
   if (handleCeilingLightning() || (ceilingLightNotifyAwaitingAck && millis() - ceilingLightNotifyAwaitingAckSince > 2000))
@@ -58,7 +61,7 @@ void loop()
     // craft GARAGE_LIGHT_NOTIFY_CEILING_LIGHT - 28
     uint8_t responsePayload[1];
     responsePayload[0] = ceilingLightningStatus;
-    SmartHomeServerClient.scheduleSendMessage(0, 28, responsePayload, sizeof(responsePayload));
+    SmartHomeServerClient.sendMessage(28, responsePayload, sizeof(responsePayload));
     ceilingLightNotifyAwaitingAck = true;
     ceilingLightNotifyAwaitingAckSince = millis();
     Log.log("GARAGE_LIGHT_NOTIFY_CEILING_LIGHT scheduled");
@@ -67,6 +70,10 @@ void loop()
   if (SmartHomeServerClient.currentState == MESSAGE_RECEIVED)
   {
     // handle incoming message
+    if (Log.debug_condition_1 && Log.debug_condition_2)
+    {
+      Log.log("main::loop() - MESSAGE_RECEIVED");
+    }
 
     // GARAGE_LIGHT_ACK - 30
     if (SmartHomeServerClient.receivedMessage.payloadLength == 0 && SmartHomeServerClient.receivedMessage.type == 30)
@@ -86,7 +93,7 @@ void loop()
       responsePayload[4] = ceilingLightningStatus;
 
       // GARAGE_LIGHT_STATUS_RESPONSE - 24
-      SmartHomeServerClient.scheduleSendMessage(LORA_RESPONSE_DELAY, 24, responsePayload, sizeof(responsePayload));
+      SmartHomeServerClient.sendMessage(24, responsePayload, sizeof(responsePayload));
       Log.log("Response scheduled");
     }
 
@@ -98,7 +105,7 @@ void loop()
 
       // send GARAGE_LIGHT_ACK
       uint8_t responsePayload[0];
-      SmartHomeServerClient.scheduleSendMessage(LORA_RESPONSE_DELAY, 29, responsePayload, sizeof(responsePayload));
+      SmartHomeServerClient.sendMessage(29, responsePayload, sizeof(responsePayload));
     }
     // GARAGE_LIGHT_SWITCH_CEILING_LIGHT_OFF - 26
     else if (SmartHomeServerClient.receivedMessage.payloadLength == 0 && SmartHomeServerClient.receivedMessage.type == 26)
@@ -108,7 +115,7 @@ void loop()
 
       // send GARAGE_LIGHT_ACK
       uint8_t responsePayload[0];
-      SmartHomeServerClient.scheduleSendMessage(LORA_RESPONSE_DELAY, 29, responsePayload, sizeof(responsePayload));
+      SmartHomeServerClient.sendMessage(29, responsePayload, sizeof(responsePayload));
     }
     // GARAGE_LIGHT_SET_DAC - 27
     else if (SmartHomeServerClient.receivedMessage.payloadLength == 4 && SmartHomeServerClient.receivedMessage.type == 27)
@@ -116,13 +123,14 @@ void loop()
       Log.log("Received: GARAGE_LIGHT_SET_DAC");
       uint16_t dac0MilliVolts = toUint16_t(SmartHomeServerClient.receivedPayload, 0);
       uint16_t dac1MilliVolts = toUint16_t(SmartHomeServerClient.receivedPayload, 2);
+      Log.debug_condition_1 = true;
 
       char buf[200];
 
       if (dac0MilliVolts != dac_channel_0_millivoltage)
       {
         dac_channel_0_millivoltage = dac0MilliVolts;
-        DacDfr0971.setDacMillivoltage(dac_channel_0_millivoltage, 0);
+        LedStripe.ch0_target = dac_channel_0_millivoltage;
         snprintf(buf, sizeof(buf), "Dac.ch0 updated: %u", dac_channel_0_millivoltage);
         Log.log(buf);
         delay(200);
@@ -130,28 +138,35 @@ void loop()
       if (dac1MilliVolts != dac_channel_1_millivoltage)
       {
         dac_channel_1_millivoltage = dac1MilliVolts;
-        DacDfr0971.setDacMillivoltage(dac_channel_1_millivoltage, 1);
+        LedStripe.ch1_target = dac_channel_1_millivoltage;
         snprintf(buf, sizeof(buf), "Dac.ch1 updated: %u", dac_channel_1_millivoltage);
         Log.log(buf);
       }
 
       // send GARAGE_LIGHT_ACK
       uint8_t responsePayload[0];
-      SmartHomeServerClient.scheduleSendMessage(LORA_RESPONSE_DELAY, 29, responsePayload, sizeof(responsePayload));
+      SmartHomeServerClient.sendMessage(29, responsePayload, sizeof(responsePayload));
     }
 
     else
     {
       Log.log("Invalig message received");
-      SmartHomeServerClient.messageIgnored();
     }
+    SmartHomeServerClient.messageConsumed();
   }
-
-  
+  if (Log.debug_condition_1 && Log.debug_condition_2)
+  {
+    Log.log("main::loop() - returning");
+  }
 }
 
 bool handleCeilingLightning()
 {
+  if (Log.debug_condition_1 && Log.debug_condition_2)
+  {
+    Log.log("handleCeilingLightning() - enter");
+  }
+
   bool result = false; // true if light status has changed
 
   unsigned long elapsed = millis() - lastChangeWallSwitch;
@@ -176,6 +191,11 @@ bool handleCeilingLightning()
 
   digitalWrite(PIN_CEILING_LIGHTNING_RELAY, ceilingLightningStatus);
   digitalWrite(LED_BUILTIN, ceilingLightningStatus);
+
+  if (Log.debug_condition_1 && Log.debug_condition_2)
+  {
+    Log.log("handleCeilingLightning() - returning");
+  }
 
   return result;
 }

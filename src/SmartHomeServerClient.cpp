@@ -6,7 +6,7 @@
 
 SmartHomeServerClientClass::SmartHomeServerClientClass() {}
 
-void SmartHomeServerClientClass::messageIgnored()
+void SmartHomeServerClientClass::messageConsumed()
 {
     if (currentState == MESSAGE_RECEIVED)
     {
@@ -56,9 +56,12 @@ bool SmartHomeServerClientClass::handleReceivedMessage()
     return true;
 }
 
-bool SmartHomeServerClientClass::scheduleSendMessage(unsigned long waitBeforeSending, uint8_t type, unsigned char *payload, size_t payloadLength)
+bool SmartHomeServerClientClass::sendMessage(uint8_t type, unsigned char *payload, size_t payloadLength)
 {
-    if (payloadLength + headerSize + CryptUtil.encryptionOverhead > sizeof(scheduledOutboundMessagePayload))
+
+    uint8_t sendPayload[headerSize + payloadLength + CryptUtil.encryptionOverhead];
+
+    if (payloadLength + headerSize + CryptUtil.encryptionOverhead > sizeof(sendPayload))
     {
         Log.log("Payload too large");
         return false;
@@ -84,25 +87,26 @@ bool SmartHomeServerClientClass::scheduleSendMessage(unsigned long waitBeforeSen
     if (!CryptUtil.encrypt(
             data,
             headerSize + payloadLength,
-            scheduledOutboundMessagePayload,
-            sizeof(scheduledOutboundMessagePayload)))
+            sendPayload,
+            sizeof(sendPayload)))
     {
         Log.log("Encryption failed");
         return false;
     }
 
-    scheduledOutboundMessagePayloadLength = headerSize + payloadLength + CryptUtil.encryptionOverhead;
-    scheduledOutboundMessageWaittime = waitBeforeSending;
+    RN2483V2.scheduleTx(sendPayload, payloadLength + headerSize + CryptUtil.encryptionOverhead);
 
-    currentState = RESPONSE_SCHEDULED;
-    currentStateChangedAt = millis();
-
-    Log.log("SmartHomeServerClientClass.messageConsumedScheduleResponse() - Message scheudled");
+    Log.log("SmartHomeServerClientClass.sendMessage() - Message handed off to RN2483V2");
     return true;
 }
 
 void SmartHomeServerClientClass::run()
 {
+    if (Log.debug_condition_1 && Log.debug_condition_2) {
+        char buf2[100];
+        sniprintf(buf2, sizeof(buf2), "SmartHomeServerClientClass::run() - enter: %u", currentState);
+        Log.log(buf2);
+    }
     RN2483V2.run();
 
     switch (currentState)
@@ -180,6 +184,7 @@ void SmartHomeServerClientClass::run()
                 }
                 else
                 {
+                    Log.log("Msg for me");
                     // local clock is drifting too much - need to update each time
                     Time.setTime(receivedMessage.timestamp);
                     currentState = MESSAGE_RECEIVED;
@@ -190,20 +195,14 @@ void SmartHomeServerClientClass::run()
         break;
     case MESSAGE_RECEIVED:
         break;
-    case RESPONSE_SCHEDULED:
-        if (millis() - currentStateChangedAt >= scheduledOutboundMessageWaittime)
-        {
-            RN2483V2.scheduleTx(scheduledOutboundMessagePayload, scheduledOutboundMessagePayloadLength);
-            Log.log("Message delivered to RN2483V2");
-            currentState = LISTENING;
-            currentStateChangedAt = millis();
-        } else {
-            Log.log("Wait time not passed yet");
-        }
-        break;
 
     default:
         break;
+    }
+
+    if (Log.debug_condition_1 && Log.debug_condition_2)
+    {
+        Log.log("SmartHomeServerClientClass.run() - returning");
     }
 }
 

@@ -3,9 +3,10 @@ This is the Arduino based firmware for my [Garage controller hardware](https://g
 
 Features
 - LoRa based [secure wireless communication](https://dehnes.com/software/2021/04/18/secure-wireless-communication-for-iot-devices.html) to my [SmartHomeServer server](https://github.com/sebdehne/SmartHomeServer)
-- Listens on wall-switch
-- Control LED stripe via DAC (0-10V)
+- Listens on wall-switch and pushes NOTIFY to server
+- Control LED stripe via DAC (0-10V) - including an algorith for smoth transistions
 - Control ceiling lightning via relay
+- code implemented as non-blocking event loop to handle concurrency, like light switch triggered during smoth LED transitions
 
 Interfaces / Pins:
 

@@ -74,13 +74,16 @@ void RN2483V2Class::calcNextState()
     {
         Log.log("RN2483V2.calcNextState() - sending now");
         // send now
-        char hexString[maxDataSize * 2 + 1]; // max 255 bytes (1 bytes takes 2 chars + 1 for \0)
+        char hexString[txBufferBytesToWrite * 2 + 1]; // max 255 bytes (1 bytes takes 2 chars + 1 for \0)
         toHex(txBuffer, txBufferBytesToWrite, hexString);
 
         char cmdString[sizeof(hexString) + 10];
         snprintf(cmdString, sizeof(cmdString), "radio tx %s", hexString);
 
         Serial1.println(cmdString);
+        Log.log(cmdString);
+        Log.log("RN2483V2.calcNextState() - sendt");
+        Log.debug_condition_2 = true;
 
         txBufferBytesToWrite = 0;
         lastTxStatus = SENDING;
@@ -91,6 +94,10 @@ void RN2483V2Class::calcNextState()
     {
         // back to listening
         startListening();
+    }
+    if (Log.debug_condition_1 && Log.debug_condition_2)
+    {
+        Log.log("RN2483V2.calcNextState() - returning");
     }
 }
 
@@ -135,6 +142,13 @@ bool RN2483V2Class::read()
 
 void RN2483V2Class::run()
 {
+
+    if (Log.debug_condition_1 && Log.debug_condition_2)
+    {
+        char buf2[100];
+        sniprintf(buf2, sizeof(buf2), "RN2483V2Class::run() - enter: %u", currentState);
+        Log.log(buf2);
+    }
 
     switch (currentState)
     {
@@ -296,7 +310,8 @@ void RN2483V2Class::run()
     case LISTENING_WAITING_FOR_DATA:
         if (read())
         {
-            if (rxBufferBytesRead >= 9 && strncmp("radio_err", rxBuffer, 9) == 0) {
+            if (rxBufferBytesRead >= 9 && strncmp("radio_err", rxBuffer, 9) == 0)
+            {
                 Log.log("Got radio error");
                 stopListening();
             }
@@ -334,6 +349,10 @@ void RN2483V2Class::run()
 
         break;
     case LISTENING_RXSTOP_SENT_WAITING_FOR_OK:
+        if (Log.debug_condition_1 && Log.debug_condition_2)
+        {
+            Log.log("RN2483::run() - case LISTENING_RXSTOP_SENT_WAITING_FOR_OK");
+        }
         if (currentStateTimeout(1000))
         {
             Log.log("RN2483V2.LISTENING_RXSTOP_SENT_WAITING_FOR_OK - timeout - resetting");
@@ -350,6 +369,10 @@ void RN2483V2Class::run()
             else
             {
                 calcNextState();
+                if (Log.debug_condition_1 && Log.debug_condition_2)
+                {
+                    Log.log("RN2483V2.run() - case LISTENING_RXSTOP_SENT_WAITING_FOR_OK done");
+                }
             }
         }
         break;
@@ -407,6 +430,11 @@ void RN2483V2Class::run()
         Log.log("RN2483V2 - Invalid state");
         scheduleReset();
         break;
+    }
+
+    if (Log.debug_condition_1 && Log.debug_condition_2)
+    {
+        Log.log("RN2483V2.run() - returning");
     }
 
     return;
