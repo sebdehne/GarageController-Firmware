@@ -12,6 +12,7 @@ public:
     bool debug_condition_2 = false;
     Logger();
     void log(const char *msg);
+    bool isDebug();
 };
 
 extern Logger Log;

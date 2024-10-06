@@ -102,7 +102,7 @@ bool SmartHomeServerClientClass::sendMessage(uint8_t type, unsigned char *payloa
 
 void SmartHomeServerClientClass::run()
 {
-    if (Log.debug_condition_1 && Log.debug_condition_2) {
+    if (Log.isDebug()) {
         char buf2[100];
         sniprintf(buf2, sizeof(buf2), "SmartHomeServerClientClass::run() - enter: %u", currentState);
         Log.log(buf2);
@@ -200,7 +200,7 @@ void SmartHomeServerClientClass::run()
         break;
     }
 
-    if (Log.debug_condition_1 && Log.debug_condition_2)
+    if (Log.isDebug())
     {
         Log.log("SmartHomeServerClientClass.run() - returning");
     }

@@ -50,7 +50,7 @@ void loop()
 
   SmartHomeServerClient.run();
   LedStripe.run();
-  if (Log.debug_condition_1 && Log.debug_condition_2)
+  if (Log.isDebug())
   {
     Log.log("main::loop() - LedStripe.run() done");
   }
@@ -70,7 +70,7 @@ void loop()
   if (SmartHomeServerClient.currentState == MESSAGE_RECEIVED)
   {
     // handle incoming message
-    if (Log.debug_condition_1 && Log.debug_condition_2)
+    if (Log.isDebug())
     {
       Log.log("main::loop() - MESSAGE_RECEIVED");
     }
@@ -154,7 +154,7 @@ void loop()
     }
     SmartHomeServerClient.messageConsumed();
   }
-  if (Log.debug_condition_1 && Log.debug_condition_2)
+  if (Log.isDebug())
   {
     Log.log("main::loop() - returning");
   }
@@ -162,7 +162,7 @@ void loop()
 
 bool handleCeilingLightning()
 {
-  if (Log.debug_condition_1 && Log.debug_condition_2)
+  if (Log.isDebug())
   {
     Log.log("handleCeilingLightning() - enter");
   }
@@ -192,7 +192,7 @@ bool handleCeilingLightning()
   digitalWrite(PIN_CEILING_LIGHTNING_RELAY, ceilingLightningStatus);
   digitalWrite(LED_BUILTIN, ceilingLightningStatus);
 
-  if (Log.debug_condition_1 && Log.debug_condition_2)
+  if (Log.isDebug())
   {
     Log.log("handleCeilingLightning() - returning");
   }

@@ -95,7 +95,7 @@ void RN2483V2Class::calcNextState()
         // back to listening
         startListening();
     }
-    if (Log.debug_condition_1 && Log.debug_condition_2)
+    if (Log.isDebug())
     {
         Log.log("RN2483V2.calcNextState() - returning");
     }
@@ -143,7 +143,7 @@ bool RN2483V2Class::read()
 void RN2483V2Class::run()
 {
 
-    if (Log.debug_condition_1 && Log.debug_condition_2)
+    if (Log.isDebug())
     {
         char buf2[100];
         sniprintf(buf2, sizeof(buf2), "RN2483V2Class::run() - enter: %u", currentState);
@@ -349,7 +349,7 @@ void RN2483V2Class::run()
 
         break;
     case LISTENING_RXSTOP_SENT_WAITING_FOR_OK:
-        if (Log.debug_condition_1 && Log.debug_condition_2)
+        if (Log.isDebug())
         {
             Log.log("RN2483::run() - case LISTENING_RXSTOP_SENT_WAITING_FOR_OK");
         }
@@ -369,7 +369,7 @@ void RN2483V2Class::run()
             else
             {
                 calcNextState();
-                if (Log.debug_condition_1 && Log.debug_condition_2)
+                if (Log.isDebug())
                 {
                     Log.log("RN2483V2.run() - case LISTENING_RXSTOP_SENT_WAITING_FOR_OK done");
                 }
@@ -432,7 +432,7 @@ void RN2483V2Class::run()
         break;
     }
 
-    if (Log.debug_condition_1 && Log.debug_condition_2)
+    if (Log.isDebug())
     {
         Log.log("RN2483V2.run() - returning");
     }

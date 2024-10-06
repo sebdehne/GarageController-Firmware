@@ -15,4 +15,9 @@ void Logger::log(const char *input)
 #endif
 }
 
+bool Logger::isDebug() {
+    return false;
+    //return debug_condition_1 && debug_condition_2;
+}
+
 Logger Log;
