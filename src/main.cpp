@@ -6,10 +6,14 @@
 #include "utils.h"
 #include "ledstripe.h"
 
-unsigned long lastChangeWallSwitch = 5000;
-int wallSwitchStatus = HIGH;      // not pressed
-int ceilingLightningStatus = LOW; // off
-bool handleCeilingLightning();
+bool handleWallswitch();
+unsigned long lastChangeWallSwitch = 0;
+
+int ceilingLightningStatus = HIGH; // on by default
+void handleCeilingLightning();
+
+void sendNotify();
+
 uint16_t dac_channel_0_millivoltage = 0;
 uint16_t dac_channel_1_millivoltage = 0;
 
@@ -32,7 +36,7 @@ void setup()
 #endif
 
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(PIN_WALL_SWITCH_PIN, INPUT_PULLUP);   // wall impulse switch (pulled down when closed)
+  pinMode(PIN_WALL_SWITCH_PIN, INPUT_PULLDOWN); // wall impulse switch connected to VCC/3.3 (HIGH down when pressed/closed)
   pinMode(PIN_CEILING_LIGHTNING_RELAY, OUTPUT); // relay
 
   Time.begin();
@@ -50,21 +54,33 @@ void loop()
 
   SmartHomeServerClient.run();
   LedStripe.run();
+  handleCeilingLightning();
+
   if (Log.isDebug())
   {
     Log.log("main::loop() - LedStripe.run() done");
   }
 
-  // retry NOTIFY if needed...
-  if (handleCeilingLightning() || (ceilingLightNotifyAwaitingAck && millis() - ceilingLightNotifyAwaitingAckSince > 2000))
+  if (ceilingLightNotifyAwaitingAck && millis() - ceilingLightNotifyAwaitingAckSince > 2000)
   {
-    // craft GARAGE_LIGHT_NOTIFY_CEILING_LIGHT - 28
-    uint8_t responsePayload[1];
-    responsePayload[0] = ceilingLightningStatus;
-    SmartHomeServerClient.sendMessage(28, responsePayload, sizeof(responsePayload));
-    ceilingLightNotifyAwaitingAck = true;
-    ceilingLightNotifyAwaitingAckSince = millis();
-    Log.log("GARAGE_LIGHT_NOTIFY_CEILING_LIGHT scheduled");
+    // retry
+    sendNotify();
+  }
+
+  if (handleWallswitch())
+  {
+    if (ceilingLightningStatus)
+    {
+      Log.log("Wall switch pressed, switching light off");
+      ceilingLightningStatus = LOW;
+    }
+    else
+    {
+      Log.log("Wall switch pressed, switching light on");
+      ceilingLightningStatus = HIGH;
+    }
+
+    sendNotify();
   }
 
   if (SmartHomeServerClient.currentState == MESSAGE_RECEIVED)
@@ -75,8 +91,8 @@ void loop()
       Log.log("main::loop() - MESSAGE_RECEIVED");
     }
 
-    // GARAGE_LIGHT_ACK - 30
-    if (SmartHomeServerClient.receivedMessage.payloadLength == 0 && SmartHomeServerClient.receivedMessage.type == 30)
+    // GARAGE_LIGHT_ACK - 29
+    if (SmartHomeServerClient.receivedMessage.payloadLength == 0 && SmartHomeServerClient.receivedMessage.type == 29)
     {
       ceilingLightNotifyAwaitingAck = false;
       Log.log("Received: ACK for GARAGE_LIGHT_NOTIFY_CEILING_LIGHT");
@@ -102,6 +118,8 @@ void loop()
     {
       Log.log("Received: GARAGE_LIGHT_SWITCH_CEILING_LIGHT_ON");
       ceilingLightningStatus = HIGH;
+      lastChangeWallSwitch = millis(); // somehow, the pin changes - pause reading for a while
+
 
       // send GARAGE_LIGHT_ACK
       uint8_t responsePayload[0];
@@ -112,6 +130,7 @@ void loop()
     {
       Log.log("Received: GARAGE_LIGHT_SWITCH_CEILING_LIGHT_OFF");
       ceilingLightningStatus = LOW;
+      lastChangeWallSwitch = millis(); // somehow, the pin changes - pause reading for a while
 
       // send GARAGE_LIGHT_ACK
       uint8_t responsePayload[0];
@@ -150,7 +169,9 @@ void loop()
 
     else
     {
-      Log.log("Invalig message received");
+      char buf[255];
+      sniprintf(buf, sizeof(buf), "Invalig message received. type=%u", SmartHomeServerClient.receivedMessage.type);
+      Log.log(buf);
     }
     SmartHomeServerClient.messageConsumed();
   }
@@ -160,42 +181,43 @@ void loop()
   }
 }
 
-bool handleCeilingLightning()
+void handleCeilingLightning()
 {
-  if (Log.isDebug())
-  {
-    Log.log("handleCeilingLightning() - enter");
-  }
-
-  bool result = false; // true if light status has changed
-
-  unsigned long elapsed = millis() - lastChangeWallSwitch;
-  if (elapsed < 1000)
-    return result;
-
-  int wall = digitalRead(PIN_WALL_SWITCH_PIN);
-  // LOW means button pressed
-
-  if (wall == LOW && wallSwitchStatus == HIGH)
-  {
-    // button changed to pressed
-    ceilingLightningStatus = !ceilingLightningStatus;
-    result = true;
-  }
-  else if (wall == HIGH && wallSwitchStatus == LOW)
-  {
-    // button released
-    lastChangeWallSwitch = millis();
-  }
-  wallSwitchStatus = wall;
-
   digitalWrite(PIN_CEILING_LIGHTNING_RELAY, ceilingLightningStatus);
   digitalWrite(LED_BUILTIN, ceilingLightningStatus);
+}
 
-  if (Log.isDebug())
+bool handleWallswitch()
+{
+
+  unsigned long elapsed = millis() - lastChangeWallSwitch;
+
+  if (elapsed < 1500)
   {
-    Log.log("handleCeilingLightning() - returning");
+    return false;
   }
 
-  return result;
+  int wall = digitalRead(PIN_WALL_SWITCH_PIN);
+  // HIGH means button pressed
+
+  if (wall == HIGH)
+  {
+    lastChangeWallSwitch = millis();
+    return true;
+  }
+  else
+  {
+    return false;
+  }
+}
+
+void sendNotify()
+{
+  // craft GARAGE_LIGHT_NOTIFY_CEILING_LIGHT - 28
+  uint8_t responsePayload[1];
+  responsePayload[0] = ceilingLightningStatus;
+  SmartHomeServerClient.sendMessage(28, responsePayload, sizeof(responsePayload));
+  ceilingLightNotifyAwaitingAck = true;
+  ceilingLightNotifyAwaitingAckSince = millis();
+  Log.log("GARAGE_LIGHT_NOTIFY_CEILING_LIGHT scheduled");
 }

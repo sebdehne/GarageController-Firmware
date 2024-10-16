@@ -162,7 +162,7 @@ void SmartHomeServerClientClass::run()
                 else
                 {
                     char buf[350];
-                    snprintf(buf, 350, "Invalid message received, from: %u payloadLength: %u", receivedMessage.from, receivedMessage.payloadLength);
+                    snprintf(buf, 350, "Invalid message received, from: %u payloadLength: %u type: %u", receivedMessage.from, receivedMessage.payloadLength, receivedMessage.type);
                     Log.log(buf);
                 }
             }
