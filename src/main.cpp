@@ -6,8 +6,17 @@
 #include "utils.h"
 #include "ledstripe.h"
 
+enum WallSwitchState
+{
+  UNPRESSED,
+  PRESSED_FILTERED,
+  PRESSED_ACCEPTED,
+};
+WallSwitchState wallswitchState = UNPRESSED;
+unsigned long wallSwtichFilterMillis = 250;
+unsigned long wallSwtichLastChange = 0;
+
 bool handleWallswitch();
-unsigned long lastChangeWallSwitch = 0;
 
 int ceilingLightningStatus = HIGH; // on by default
 void handleCeilingLightning();
@@ -25,18 +34,17 @@ unsigned long ceilingLightNotifyAwaitingAckSince = 0;
 
 void setup()
 {
-#ifdef DEBUG
-  // setup Serial
+
   Serial.begin(115200);
-  while (!Serial)
-  {
-    ;
-  }
   Serial.println("OK");
-#endif
+
+  //  while (!Serial)
+  //  {
+  //    ;
+  //  }
 
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(PIN_WALL_SWITCH_PIN, INPUT_PULLDOWN); // wall impulse switch connected to VCC/3.3 (HIGH down when pressed/closed)
+  pinMode(PIN_WALL_SWITCH_PIN, INPUT);          // wall impulse switch connected to VCC/3.3 (HIGH down when pressed/closed)
   pinMode(PIN_CEILING_LIGHTNING_RELAY, OUTPUT); // relay
 
   Time.begin();
@@ -118,8 +126,6 @@ void loop()
     {
       Log.log("Received: GARAGE_LIGHT_SWITCH_CEILING_LIGHT_ON");
       ceilingLightningStatus = HIGH;
-      lastChangeWallSwitch = millis(); // somehow, the pin changes - pause reading for a while
-
 
       // send GARAGE_LIGHT_ACK
       uint8_t responsePayload[0];
@@ -130,7 +136,6 @@ void loop()
     {
       Log.log("Received: GARAGE_LIGHT_SWITCH_CEILING_LIGHT_OFF");
       ceilingLightningStatus = LOW;
-      lastChangeWallSwitch = millis(); // somehow, the pin changes - pause reading for a while
 
       // send GARAGE_LIGHT_ACK
       uint8_t responsePayload[0];
@@ -190,25 +195,44 @@ void handleCeilingLightning()
 bool handleWallswitch()
 {
 
-  unsigned long elapsed = millis() - lastChangeWallSwitch;
+  bool result = false;
 
-  if (elapsed < 1500)
+  switch (wallswitchState)
   {
-    return false;
+  case UNPRESSED:
+  {
+    if (digitalRead(PIN_WALL_SWITCH_PIN)) {
+      wallSwtichLastChange = millis();
+      wallswitchState = PRESSED_FILTERED;
+    }
+    break;
   }
 
-  int wall = digitalRead(PIN_WALL_SWITCH_PIN);
-  // HIGH means button pressed
+  case PRESSED_FILTERED: {
+    if (!digitalRead(PIN_WALL_SWITCH_PIN)) {
+      wallSwtichLastChange = millis();
+      wallswitchState = UNPRESSED;
+    } else if (millis() - wallSwtichLastChange > wallSwtichFilterMillis) {
+      wallSwtichLastChange = millis();
+      wallswitchState = PRESSED_ACCEPTED;
+      result = true;
+    }
+    break;
+  }
 
-  if (wall == HIGH)
-  {
-    lastChangeWallSwitch = millis();
-    return true;
+  case PRESSED_ACCEPTED: {
+    if (!digitalRead(PIN_WALL_SWITCH_PIN)) {
+      wallSwtichLastChange = millis();
+      wallswitchState = UNPRESSED;
+    }
+    break;
   }
-  else
-  {
-    return false;
+
+  default:
+    break;
   }
+
+  return result;
 }
 
 void sendNotify()

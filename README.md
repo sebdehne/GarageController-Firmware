@@ -10,8 +10,8 @@ Features
 
 Interfaces / Pins:
 
-Changed to board (Binds J6-2 to GND and J6-1 to PIN PB02):
-- R4: left unsoldered (open);
+Changes no board (Binds J6-2 to GND and J6-1 to PIN PB02):
+- R4: pull-down (300 Ohm);
 - R3: bridged (closed);
 - Q2: left unsoldered (open);
 
