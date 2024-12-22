@@ -1,7 +1,7 @@
 # Garage Lights Controller - based on Nano RP2040 Connect
 
 Firmware for the [Arduino Nano RP2040 Connect](https://store.arduino.cc/products/arduino-nano-rp2040-connect) which controlls all Lights in my garage. 
-Usees simple IP/UDP over wifi.
+Uses simple IP/UDP over wifi.
 
 Pins:
 - PIN D17/A3 - digital out - relay for ceiling light
