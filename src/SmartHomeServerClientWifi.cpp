@@ -130,6 +130,7 @@ void SmartHomeServerClientWifiClass::run()
             sendMode = SmartHomeServerClientWifi_SendMode_NO_SEND;
             sendModeChangedAt = millis();
             resendCounter = 0;
+            lastMsgFromServerAt = millis();
         }
         else
         {
@@ -170,6 +171,7 @@ void SmartHomeServerClientWifiClass::run()
             Udp.beginPacket(SmartHomeServer_IP, SmartHomeServer_PORT);
             Udp.write(sendBuf, sendLen);
             Udp.endPacket();
+            Log.log("UDP msg sent");
 
             if (sendMode == SmartHomeServerClientWifi_SendMode_SEND_AND_WAIT_FOR_ACK)
             {

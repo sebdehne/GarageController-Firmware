@@ -25,7 +25,9 @@ void LedStripeClass::run()
     case LedStripeState_INIT:
     {
         pinMode(PIN_CEILING_LIGHTNING_RELAY, OUTPUT);
+        pinMode(LED_BUILTIN, OUTPUT);
         currentState = LedStripeState_RUNNING;
+        Log.log("Setup LED light done");
         break;
     }
     case LedStripeState_RUNNING:
@@ -51,6 +53,7 @@ void LedStripeClass::run()
         }
         if (target_ceilingLight != ceilingLight)
         {
+            Log.log("Switching ceiling light");
             digitalWrite(PIN_CEILING_LIGHTNING_RELAY, target_ceilingLight);
             digitalWrite(LED_BUILTIN, target_ceilingLight);
             ceilingLight = target_ceilingLight;

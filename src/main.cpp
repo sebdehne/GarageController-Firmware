@@ -11,7 +11,7 @@ enum WallSwitchState
   PRESSED_ACCEPTED,
 };
 WallSwitchState wallswitchState = UNPRESSED;
-unsigned long wallSwtichFilterMillis = 250;
+unsigned long wallSwtichFilterMillis = 50;
 unsigned long wallSwtichLastChange = 0;
 
 bool handleWallswitch();
@@ -21,8 +21,10 @@ void setup()
 
   Serial.begin(115200);
   Serial.println("OK");
+  delay(2000);
 
   pinMode(PIN_WALL_SWITCH_PIN, INPUT_PULLDOWN);
+  
 
   while (!Serial)
   {
