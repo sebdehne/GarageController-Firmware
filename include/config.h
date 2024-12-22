@@ -1,11 +1,12 @@
-#define FIRMWARE_VERSION 7
-
-// reserve flash (in bytes) for firmware and userspace
-#define FIRMWARE_SIZE 40000 // should be large enough to hold the firmware
-#define USERDATA_SIZE 1
-
-// note: when using DEBUG - power is not removed and the ChipCap2 does not make new measurements
 // #define DEBUG
 
-#define LORA_RETRY_DELAY random(0, 500)
-#define LORA_RETRY_FIRMWARE_COUNT 30
+#define SmartHomeServer_IP "192.168.1.1"
+#define SmartHomeServer_PORT 9002
+#define LOCAL_UDP_PORT 9000
+
+#define PIN_WALL_SWITCH_PIN 16
+#define PIN_CEILING_LIGHTNING_RELAY 17
+#define WIFI_RESET_IF_NO_MSG_FROM_SERVER_FOR 30000
+#define WIFI_UDP_RESEND_GIVE_UP_AFTER 40
+#define WIFI_UDP_RESEND_DELAY_MS 500
+
