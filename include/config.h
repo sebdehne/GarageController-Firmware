@@ -1,6 +1,6 @@
 #define DEBUG
 
-#define SmartHomeServer_IP "192.168.1.13"
+#define SmartHomeServer_IP "192.168.1.1"
 #define SmartHomeServer_PORT 9002
 #define LOCAL_UDP_PORT 9000
 
