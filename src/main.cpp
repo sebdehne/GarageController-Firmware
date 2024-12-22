@@ -20,17 +20,9 @@ void setup()
 {
 
   Serial.begin(115200);
-  Serial.println("OK");
-  delay(2000);
 
   pinMode(PIN_WALL_SWITCH_PIN, INPUT_PULLDOWN);
   
-
-  while (!Serial)
-  {
-    ;
-  }
-
   Log.log("Setup done!");
 }
 
