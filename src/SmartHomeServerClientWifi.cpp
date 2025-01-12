@@ -19,17 +19,16 @@ void SmartHomeServerClientWifiClass::markMessageConsumed()
     currentStateChangedAt = millis();
 }
 
-void SmartHomeServerClientWifiClass::scheduleNotify(bool withAck)
+void SmartHomeServerClientWifiClass::scheduleNotify(bool asNotify)
 {
-    if (withAck)
+    if (asNotify)
     {
-        sendMode = SmartHomeServerClientWifi_SendMode_SEND_AND_WAIT_FOR_ACK;
+        sendMode = SmartHomeServerClientWifi_SendMode_SEND_AS_NOTIFY;
     }
     else
     {
-        sendMode = SmartHomeServerClientWifi_SendMode_SEND_WITHOUT_ACK;
+        sendMode = SmartHomeServerClientWifi_SendMode_SEND_AS_DATA_RESPONSE;
     }
-    sendModeChangedAt = millis();
 };
 
 void SmartHomeServerClientWifiClass::run()
@@ -109,37 +108,70 @@ void SmartHomeServerClientWifiClass::run()
 
         break;
     case SmartHomeServer_MESSAGE_RECEIVED:
-        if (receivedMessageLengh == 5)
+    {
+        Log.log("Handling request");
+        uint8_t msgType = receivedMessage[0];
+
+        switch (msgType)
         {
-            Log.log("Handling request");
-            bool requestedCeilingLight = receivedMessage[0];
+        case 0: // DATA_REQUEST
+        {
+            scheduleNotify(false);
+            break;
+        }
+        case 2: // CMD_CEILING_LIGHT_ON
+        {
+            LedStripe.target_ceilingLight = true;
+
+            Log.log("Sending...CMD_CEILING_LIGHT_ON-ACK");
+            sendBuf[0] = 5;
+            sendLen = 1;
+            Udp.beginPacket(SmartHomeServer_IP, SmartHomeServer_PORT);
+            Udp.write(sendBuf, sendLen);
+            Udp.endPacket();
+            break;
+        }
+        case 3: // CMD_CEILING_LIGHT_OFF
+        {
+            LedStripe.target_ceilingLight = false;
+
+            Log.log("Sending...CMD_CEILING_LIGHT_OFF-ACK");
+            sendBuf[0] = 5;
+            sendLen = 1;
+            Udp.beginPacket(SmartHomeServer_IP, SmartHomeServer_PORT);
+            Udp.write(sendBuf, sendLen);
+            Udp.endPacket();
+            break;
+        }
+        case 4: // CMD_LEDSTRIPE
+        {
             uint16_t requestedMilliVoltsCh0 = toUint16_t(receivedMessage, 1);
             uint16_t requestedMilliVoltsCh1 = toUint16_t(receivedMessage, 3);
 
             LedStripe.ch0_target = requestedMilliVoltsCh0;
             LedStripe.ch1_target = requestedMilliVoltsCh1;
-            LedStripe.target_ceilingLight = requestedCeilingLight;
 
-            scheduleNotify(false);
+            Log.log("Sending...CMD_LEDSTRIPE-ACK");
+            sendBuf[0] = 5;
+            sendLen = 1;
+            Udp.beginPacket(SmartHomeServer_IP, SmartHomeServer_PORT);
+            Udp.write(sendBuf, sendLen);
+            Udp.endPacket();
+            break;
+        }
 
-            lastMsgFromServerAt = millis();
-        }
-        else if (receivedMessageLengh == 1 && sendMode == SmartHomeServerClientWifi_SendMode_WAITING_FOR_ACK)
-        {
-            Log.log("Handling ACK");
-            sendMode = SmartHomeServerClientWifi_SendMode_NO_SEND;
-            sendModeChangedAt = millis();
-            resendCounter = 0;
-            lastMsgFromServerAt = millis();
-        }
-        else
+        default:
         {
             Log.log("Ignoring UDP msg");
+            break;
+        }
         }
 
         markMessageConsumed();
 
         break;
+    }
+
     case SmartHomeServer_READING_DATA:
     {
         // handle inbound
@@ -159,50 +191,24 @@ void SmartHomeServerClientWifiClass::run()
         // handle outbound
         switch (sendMode)
         {
-        case SmartHomeServerClientWifi_SendMode_SEND_AND_WAIT_FOR_ACK:
-        case SmartHomeServerClientWifi_SendMode_SEND_WITHOUT_ACK:
+        case SmartHomeServerClientWifi_SendMode_SEND_AS_DATA_RESPONSE:
+        case SmartHomeServerClientWifi_SendMode_SEND_AS_NOTIFY:
         {
-            sendBuf[0] = LedStripe.currentCeilingLight();
-            writeUint16(LedStripe.currentMilliVoltsCh0(), sendBuf, 1);
-            writeUint16(LedStripe.currentMilliVoltsCh1(), sendBuf, 3);
-            sendLen = 5;
+            sendBuf[0] = 1; // TYPE: DATA
+            sendBuf[1] = LedStripe.currentCeilingLight();
+            writeUint16(LedStripe.currentMilliVoltsCh0(), sendBuf, 2);
+            writeUint16(LedStripe.currentMilliVoltsCh1(), sendBuf, 4);
+            sendBuf[6] = sendMode == SmartHomeServerClientWifi_SendMode_SEND_AS_NOTIFY;
+            sendLen = 7;
 
             // send it
             Udp.beginPacket(SmartHomeServer_IP, SmartHomeServer_PORT);
             Udp.write(sendBuf, sendLen);
             Udp.endPacket();
-            Log.log("UDP msg sent");
 
-            if (sendMode == SmartHomeServerClientWifi_SendMode_SEND_AND_WAIT_FOR_ACK)
-            {
-                sendMode = SmartHomeServerClientWifi_SendMode_WAITING_FOR_ACK;
-            }
-            else
-            {
-                sendMode = SmartHomeServerClientWifi_SendMode_NO_SEND;
-            }
-            sendModeChangedAt = millis();
+            sendMode = SmartHomeServerClientWifi_SendMode_NO_SEND;
+            Log.log("Sending DATA response...done");
 
-            break;
-        }
-        case SmartHomeServerClientWifi_SendMode_WAITING_FOR_ACK:
-        {
-            unsigned long delta = millis() - sendModeChangedAt;
-            if (delta > WIFI_UDP_RESEND_DELAY_MS)
-            {
-                if (resendCounter++ < WIFI_UDP_RESEND_GIVE_UP_AFTER)
-                {
-                    sendMode = SmartHomeServerClientWifi_SendMode_SEND_AND_WAIT_FOR_ACK;
-                    sendModeChangedAt = millis();
-                }
-                else
-                {
-                    Log.log("Giving up re-sending");
-                    sendMode = SmartHomeServerClientWifi_SendMode_NO_SEND;
-                    resendCounter = 0;
-                    sendModeChangedAt = millis();
-                }
-            }
             break;
         }
 

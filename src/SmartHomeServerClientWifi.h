@@ -19,9 +19,8 @@ enum SmartHomeServerClientWifiState
 enum SmartHomeServerClientWifi_SendMode
 {
     SmartHomeServerClientWifi_SendMode_NO_SEND,
-    SmartHomeServerClientWifi_SendMode_SEND_AND_WAIT_FOR_ACK,
-    SmartHomeServerClientWifi_SendMode_SEND_WITHOUT_ACK,
-    SmartHomeServerClientWifi_SendMode_WAITING_FOR_ACK,
+    SmartHomeServerClientWifi_SendMode_SEND_AS_NOTIFY,
+    SmartHomeServerClientWifi_SendMode_SEND_AS_DATA_RESPONSE,
 };
 
 class SmartHomeServerClientWifiClass
@@ -31,10 +30,8 @@ private:
     SmartHomeServerClientWifiState currentState = SmartHomeServer_INIT;
     unsigned long currentStateChangedAt = millis();
     SmartHomeServerClientWifi_SendMode sendMode = SmartHomeServerClientWifi_SendMode_NO_SEND;
-    unsigned long sendModeChangedAt = millis();
     uint8_t sendBuf[1000];
     size_t sendLen = 0;
-    unsigned long resendCounter = 0;
 
     unsigned long lastMsgFromServerAt = millis();
 

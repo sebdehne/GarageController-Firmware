@@ -11,7 +11,7 @@ enum WallSwitchState
   PRESSED_ACCEPTED,
 };
 WallSwitchState wallswitchState = UNPRESSED;
-unsigned long wallSwtichFilterMillis = 50;
+unsigned long wallSwtichFilterMillis = 20;
 unsigned long wallSwtichLastChange = 0;
 
 bool handleWallswitch();
@@ -21,7 +21,7 @@ void setup()
 
   Serial.begin(115200);
 
-  pinMode(PIN_WALL_SWITCH_PIN, INPUT_PULLDOWN);
+  pinMode(PIN_WALL_SWITCH_PIN, INPUT);
   
   Log.log("Setup done!");
 }
@@ -57,7 +57,7 @@ bool handleWallswitch()
   {
   case UNPRESSED:
   {
-    if (digitalRead(PIN_WALL_SWITCH_PIN))
+    if (!digitalRead(PIN_WALL_SWITCH_PIN)) // LOW = PRESSED, HIGH = UNPRESSED
     {
       wallSwtichLastChange = millis();
       wallswitchState = PRESSED_FILTERED;
@@ -67,7 +67,7 @@ bool handleWallswitch()
 
   case PRESSED_FILTERED:
   {
-    if (!digitalRead(PIN_WALL_SWITCH_PIN))
+    if (digitalRead(PIN_WALL_SWITCH_PIN))
     {
       wallSwtichLastChange = millis();
       wallswitchState = UNPRESSED;
@@ -83,7 +83,7 @@ bool handleWallswitch()
 
   case PRESSED_ACCEPTED:
   {
-    if (!digitalRead(PIN_WALL_SWITCH_PIN))
+    if (digitalRead(PIN_WALL_SWITCH_PIN))
     {
       wallSwtichLastChange = millis();
       wallswitchState = UNPRESSED;
