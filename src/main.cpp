@@ -20,8 +20,11 @@ void setup()
 {
 
   Serial.begin(115200);
+  sleep_ms(5000);
 
   pinMode(PIN_WALL_SWITCH_PIN, INPUT);
+
+  DacDfr0971.setup();
   
   Log.log("Setup done!");
 }
